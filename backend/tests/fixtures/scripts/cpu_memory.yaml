@@ -1,0 +1,12 @@
+node: n010
+type: cpu
+script: |
+  #!/bin/bash
+  #SBATCH --job-name=memory_job
+  #SBATCH --output=output_%j.txt
+  #SBATCH --nodelist={node}
+  #SBATCH --cpus-per-task=4
+  #SBATCH --time=06:00:00
+  #SBATCH --mem=256G
+
+  python memory_intensive.py

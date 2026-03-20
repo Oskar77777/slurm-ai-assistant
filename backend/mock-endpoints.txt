@@ -1,0 +1,6 @@
+https://localhost:12200/api/v2/cluster/ex3.simula.no/nodes
+https://localhost:12200/api/v2/cluster/ex3.simula.no/nodes/info
+https://localhost:12200/api/v2/cluster/ex3.simula.no/nodes/g001/info
+https://localhost:12200/api/v2/cluster/ex3.simula.no/jobs
+https://localhost:12200/api/v2/cluster/ex3.simula.no/jobs/965228?epoch=0
+https://localhost:12200/api/v2/cluster/ex3.simula.no/partitions
