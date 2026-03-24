@@ -10,6 +10,7 @@ from services.ollama_client import ollama_client
 from services.ex3_client import ex3_client
 from services.data_processor import summarize_nodes
 from services.slurm_validator import validate_script, format_errors_for_llm
+from services.resource_planner import recommend_gpu_allocation, extract_gpu_count
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -94,6 +95,11 @@ async def chat(request: ChatRequest):
                 # Summarize node data to human-readable format
                 if tool_name in ["nodes_list", "nodes_info"]:
                     data_str = summarize_nodes(cluster_data)
+                    num_gpus = extract_gpu_count(messages)
+                    if num_gpus:
+                        recommendation = recommend_gpu_allocation(cluster_data, num_gpus)
+                        data_str = data_str + "\n\n" + recommendation
+                        logger.info(f"Injected resource recommendation for {num_gpus} GPUs")
                     logger.info(f"Summarized node data ({len(data_str)} chars)")
                 else:
                     data_str = json.dumps(cluster_data, indent=2)

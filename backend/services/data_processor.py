@@ -117,4 +117,38 @@ def summarize_nodes(nodes_data: dict[str, Any]) -> dict[str, Any]:
         for n in nodes_by_status["full"]:
             lines.append(f"  {n['name']}: [{', '.join(n['partitions'])}]")
 
+    # Build partition summary so the LLM can reason about multi-node jobs
+    # Maps partition -> gpu_model -> {gpus_per_node, total_nodes, idle_nodes, total_gpus, idle_gpus}
+    partition_gpu_info: dict[str, dict] = {}
+    all_nodes = nodes_by_status["idle"] + nodes_by_status["partial"] + nodes_by_status["full"]
+    for n in all_nodes:
+        if n["type"] != "GPU":
+            continue
+        total_gpus_node = int(n["gpus"].split("/")[1])
+        avail_gpus_node = int(n["gpus"].split("/")[0])
+        gpu_model = n["gpu_model"]
+        is_idle = n in nodes_by_status["idle"]
+        for partition in n["partitions"]:
+            key = (partition, gpu_model, total_gpus_node)
+            if key not in partition_gpu_info:
+                partition_gpu_info[key] = {"total_nodes": 0, "idle_nodes": 0,
+                                           "total_gpus": 0, "idle_gpus": 0}
+            entry = partition_gpu_info[key]
+            entry["total_nodes"] += 1
+            entry["total_gpus"] += total_gpus_node
+            entry["idle_gpus"] += avail_gpus_node
+            if is_idle:
+                entry["idle_nodes"] += 1
+
+    if partition_gpu_info:
+        lines.append("")
+        lines.append("GPU PARTITION SUMMARY (for multi-node job planning):")
+        lines.append("  Format: partition | GPU model | GPUs/node | nodes (idle/total) | GPUs available/total")
+        for (partition, gpu_model, gpus_per_node), info in sorted(partition_gpu_info.items()):
+            lines.append(
+                f"  {partition}: {gpu_model}, {gpus_per_node} GPU/node, "
+                f"{info['idle_nodes']}/{info['total_nodes']} nodes idle, "
+                f"{info['idle_gpus']}/{info['total_gpus']} GPUs available"
+            )
+
     return "\n".join(lines)

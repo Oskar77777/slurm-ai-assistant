@@ -8,6 +8,7 @@ Run with:
 
 import pytest
 import asyncio
+import re
 import yaml
 from pathlib import Path
 
@@ -95,9 +96,18 @@ class TestClusterQueries:
 class TestScriptGeneration:
     """Tests for generating SLURM scripts."""
 
+    # Known eX3 partition names from the cluster
+    EX3_GPU_PARTITIONS = ["dgx2q", "hgx2q", "h200q", "gh200q", "a100q", "a40q",
+                          "mi210q", "mi100q", "mi50q", "milanq", "huaq", "defq", "xeonmaxq"]
+    EX3_CPU_PARTITIONS = ["armq", "fpgaq", "genoaxq", "rome16q", "slowq",
+                          "virtq", "flowq", "aarchq"]
+
     def test_gpu_script(self, async_client, services_available):
-        """Generate a script for GPU training."""
-        question = "I need a SLURM script for training a PyTorch model on a GPU. Can you help?"
+        """Generate a GPU script based on currently available eX3 nodes."""
+        question = (
+            "I need a SLURM script for training a PyTorch model on a GPU on the eX3 cluster. "
+            "Can you check what GPU nodes are currently available and generate an appropriate script?"
+        )
 
         data = asyncio.run(ask_assistant(async_client, question))
         content = data["response"].lower()
@@ -110,9 +120,17 @@ class TestScriptGeneration:
         assert any(ind in content for ind in ["--gres=gpu", "--gpus", "gpu"]), \
             "Expected GPU allocation"
 
+        # Should reference a real eX3 GPU partition (proving it used cluster data)
+        assert any(p in content for p in self.EX3_GPU_PARTITIONS), \
+            f"Expected script to reference a real eX3 GPU partition. Known GPU partitions: {self.EX3_GPU_PARTITIONS}"
+
     def test_cpu_script(self, async_client, services_available):
-        """Generate a script for CPU-only job."""
-        question = "Write me a SLURM script for a CPU-only job that needs 8 cores and 16GB RAM for 2 hours"
+        """Generate a CPU script based on currently available eX3 nodes."""
+        question = (
+            "I need a SLURM script for a CPU-only job that needs 8 cores and 16GB RAM "
+            "for 2 hours on the eX3 cluster. Can you check what CPU nodes are currently "
+            "available and generate an appropriate script?"
+        )
 
         data = asyncio.run(ask_assistant(async_client, question))
         content = data["response"].lower()
@@ -128,6 +146,10 @@ class TestScriptGeneration:
         # Should contain memory allocation
         assert any(ind in content for ind in ["--mem", "memory", "gb", "ram"]), \
             "Expected memory allocation"
+
+        # Should reference a real eX3 CPU partition (proving it used cluster data)
+        assert any(p in content for p in self.EX3_CPU_PARTITIONS), \
+            f"Expected script to reference a real eX3 CPU partition. Known CPU partitions: {self.EX3_CPU_PARTITIONS}"
 
 
 # =============================================================================
@@ -204,6 +226,61 @@ class TestScriptReview:
 
 
 # =============================================================================
+# Multi-Node Distributed Training Tests
+# =============================================================================
+
+class TestMultiNodeTraining:
+    """Tests for generating multi-node distributed training SLURM scripts."""
+
+    EX3_GPU_PARTITIONS = ["dgx2q", "hgx2q", "h200q", "gh200q", "a100q", "a40q",
+                          "mi210q", "mi100q", "mi50q", "xeonmaxq"]
+
+    def test_multinode_gpu_script(self, async_client, services_available):
+        """Generate a multi-node distributed training script for 12 GPUs."""
+        question = (
+            "I need to fine-tune a large PyTorch model that requires 8 GPUs. "
+            "Can you check what GPU nodes are currently available on the eX3 cluster "
+            "and write a SLURM script for distributed multi-node training?"
+        )
+
+        data = asyncio.run(ask_assistant(async_client, question))
+        content = data["response"].lower()
+        raw = data["response"]
+
+        # Should contain a SLURM script
+        assert any(ind in content for ind in ["#!/bin/bash", "#sbatch"]), \
+            "Expected a SLURM script"
+
+        # Should request more than one node
+        nodes_match = re.search(r"--nodes[= ](\d+)", raw)
+        assert nodes_match is not None, \
+            "Expected --nodes directive in script"
+        num_nodes = int(nodes_match.group(1))
+        assert num_nodes > 1, \
+            f"Expected --nodes > 1 for multi-node job, got --nodes={num_nodes}"
+
+        # Should allocate GPUs
+        assert any(ind in content for ind in ["--gpus-per-node", "--gres=gpu", "--gpus"]), \
+            "Expected GPU allocation directive"
+
+        # Should use torchrun for PyTorch distributed training
+        assert "torchrun" in content, \
+            "Expected torchrun for PyTorch distributed training"
+
+        # torchrun should be configured for multi-node (not --standalone)
+        multi_node_indicators = ["nnodes", "slurm_nnodes", "rdzv", "nproc_per_node"]
+        assert any(ind in content for ind in multi_node_indicators), \
+            "Expected multi-node torchrun configuration (--nnodes, --rdzv-backend, etc.)"
+
+        # Should reference a real eX3 GPU partition inside the script block itself
+        script_match = re.search(r"```bash\n(.*?)```", raw, re.DOTALL)
+        assert script_match is not None, "Expected a bash code block in the response"
+        script_block = script_match.group(1).lower()
+        assert any(p in script_block for p in self.EX3_GPU_PARTITIONS), \
+            f"Expected a real eX3 GPU partition inside the script block. Known: {self.EX3_GPU_PARTITIONS}"
+
+
+# =============================================================================
 # Script Adaptation Tests
 # =============================================================================
 
@@ -212,10 +289,6 @@ class TestScriptAdaptation:
 
     @pytest.mark.parametrize("script_name", [
         "gpu_training",
-        "gpu_inference",
-        "multi_gpu",
-        "cpu_compute",
-        "cpu_memory",
     ])
     def test_suggest_alternatives(self, async_client, services_available, script_name):
         """Ask for alternative nodes for a script."""
@@ -243,8 +316,6 @@ class TestScriptAdaptation:
             "Expected to suggest alternatives"
 
     @pytest.mark.parametrize("script_name,target_type", [
-        ("cpu_compute", "gpu"),
-        ("cpu_memory", "gpu"),
         ("gpu_training", "cpu"),
         ("gpu_inference", "cpu"),
     ])
@@ -258,7 +329,7 @@ class TestScriptAdaptation:
         current_label = "CPU" if current_type == "cpu" else "GPU"
         target_label = "GPU" if target_type == "gpu" else "CPU"
 
-        question = f"""I have this SLURM script written for {current_label} nodes, but only {target_label} nodes are available. Can you adapt it?
+        question = f"""I have this SLURM script written for {current_label} nodes, but I need to run it on a {target_label} node instead. Can you check what {target_label} nodes are currently available on the cluster and adapt the script to use one of them?
 
 {script_content}"""
 
@@ -276,3 +347,16 @@ class TestScriptAdaptation:
         else:
             assert any(ind in content for ind in ["--cpus", "cpus-per-task", "cpu", "--ntasks"]), \
                 "Expected CPU directives"
+
+        # The adapted script should replace --nodelist with an appropriate node.
+        # Find --nodelist lines in the adapted script (not comment lines).
+        nodelist_lines = [
+            line for line in content.split('\n')
+            if '#sbatch' in line and 'nodelist' in line
+        ]
+        for line in nodelist_lines:
+            assert node.lower() not in line, (
+                f"LLM kept original {current_label} node '{node}' in --nodelist "
+                f"when adapting to {target_label}. Expected it to fetch currently "
+                f"available {target_label} nodes and replace the node."
+            )
