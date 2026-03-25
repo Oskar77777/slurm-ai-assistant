@@ -8,9 +8,9 @@ import config
 from models import ChatRequest, ChatResponse
 from services.ollama_client import ollama_client
 from services.ex3_client import ex3_client
-from services.data_processor import summarize_nodes
+from services.data_processor import summarize_nodes, summarize_gpu_nodes, summarize_cpu_nodes
 from services.slurm_validator import validate_script, format_errors_for_llm
-from services.resource_planner import recommend_gpu_allocation, extract_gpu_count
+from services.resource_planner import recommend_gpu_allocation, extract_gpu_count, detect_node_query_intent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -46,6 +46,66 @@ def preprocess_message(content: str) -> str:
     return content
 
 
+def extract_sbatch_directives(script: str) -> dict[str, str]:
+    """Extract #SBATCH directives from a script as {flag: value} dict."""
+    directives = {}
+    for line in script.splitlines():
+        line = line.strip()
+        match = re.match(r"#SBATCH\s+--(\S+?)(?:=(.*))?$", line)
+        if match:
+            key = match.group(1)
+            value = match.group(2) or ""
+            directives[key] = value.strip()
+    return directives
+
+
+def extract_user_script(messages: list[dict]) -> str | None:
+    """Return the first user message that contains a SLURM script, or None."""
+    for msg in messages:
+        if msg.get("role") == "user" and "#SBATCH" in msg.get("content", ""):
+            return msg["content"]
+    return None
+
+
+def restore_missing_directives(response: str, original_directives: dict[str, str]) -> str:
+    """
+    Find the bash code block in the LLM response and inject any directives
+    from the original script that are missing from it.
+    """
+    block_match = re.search(r"(```bash\n)(.*?)(```)", response, re.DOTALL)
+    if not block_match:
+        return response
+
+    block_content = block_match.group(2)
+
+    # Find which directives are missing from the LLM's output script
+    missing = {}
+    for key, value in original_directives.items():
+        pattern = rf"#SBATCH\s+--{re.escape(key)}"
+        if not re.search(pattern, block_content):
+            missing[key] = value
+
+    if not missing:
+        return response
+
+    # Build lines to inject and insert them after the last existing #SBATCH line
+    inject_lines = "\n".join(
+        f"#SBATCH --{k}={v}" if v else f"#SBATCH --{k}" for k, v in missing.items()
+    )
+    logger.info(f"Restoring {len(missing)} missing directive(s): {list(missing.keys())}")
+
+    # Insert after the last #SBATCH line in the block
+    lines = block_content.splitlines()
+    last_sbatch = max((i for i, l in enumerate(lines) if l.strip().startswith("#SBATCH")), default=None)
+    if last_sbatch is not None:
+        lines.insert(last_sbatch + 1, inject_lines)
+        new_block = "\n".join(lines)
+    else:
+        new_block = inject_lines + "\n" + block_content
+
+    return response[:block_match.start(2)] + new_block + response[block_match.end(2):]
+
+
 @app.on_event("startup")
 async def startup_event():
     """Log configuration on startup."""
@@ -70,6 +130,11 @@ async def chat(request: ChatRequest):
         if msg.role == "user":
             content = preprocess_message(content)
         messages.append({"role": msg.role, "content": content})
+
+    # Extract directives from any user-submitted script for post-processing
+    user_script = extract_user_script(messages)
+    original_directives = extract_sbatch_directives(user_script) if user_script else {}
+
     iterations = 0
 
     while iterations < config.MAX_FETCH_ITERATIONS:
@@ -94,9 +159,17 @@ async def chat(request: ChatRequest):
 
                 # Summarize node data to human-readable format
                 if tool_name in ["nodes_list", "nodes_info"]:
-                    data_str = summarize_nodes(cluster_data)
-                    num_gpus = extract_gpu_count(messages)
-                    if num_gpus:
+                    intent = detect_node_query_intent(messages)
+                    if intent == "gpu":
+                        data_str = summarize_gpu_nodes(cluster_data)
+                    elif intent == "cpu":
+                        data_str = summarize_cpu_nodes(cluster_data)
+                    else:
+                        data_str = summarize_nodes(cluster_data)
+                    logger.info(f"Node query intent: {intent}")
+
+                    if intent in ("gpu", "all"):
+                        num_gpus = extract_gpu_count(messages) or 1
                         recommendation = recommend_gpu_allocation(cluster_data, num_gpus)
                         data_str = data_str + "\n\n" + recommendation
                         logger.info(f"Injected resource recommendation for {num_gpus} GPUs")
@@ -129,6 +202,8 @@ async def chat(request: ChatRequest):
         else:
             # No fetch marker, return the response
             logger.info("No fetch marker, returning response")
+            if original_directives:
+                response = restore_missing_directives(response, original_directives)
             return ChatResponse(response=response)
 
     # Max iterations reached

@@ -100,7 +100,7 @@ class TestScriptGeneration:
     EX3_GPU_PARTITIONS = ["dgx2q", "hgx2q", "h200q", "gh200q", "a100q", "a40q",
                           "mi210q", "mi100q", "mi50q", "milanq", "huaq", "defq", "xeonmaxq"]
     EX3_CPU_PARTITIONS = ["armq", "fpgaq", "genoaxq", "rome16q", "slowq",
-                          "virtq", "flowq", "aarchq"]
+                          "virtq", "flowq", "aarchq", "ipuq"]
 
     def test_gpu_script(self, async_client, services_available):
         """Generate a GPU script based on currently available eX3 nodes."""
@@ -287,20 +287,23 @@ class TestMultiNodeTraining:
 class TestScriptAdaptation:
     """Tests for suggesting alternative nodes and adapting scripts."""
 
-    @pytest.mark.parametrize("script_name", [
-        "gpu_training",
-    ])
-    def test_suggest_alternatives(self, async_client, services_available, script_name):
-        """Ask for alternative nodes for a script."""
-        script_data = load_script(script_name)
-        node = script_data["node"]
-        script_type = script_data["type"]
-        script_content = script_data["script"].format(node=node)
+    def test_suggest_alternatives(self, async_client, services_available):
+        """Ask for alternative GPU nodes when the hardcoded node is fully occupied."""
+        node = "g001"
+        script = """#!/bin/bash
+#SBATCH --job-name=gpu_training
+#SBATCH --output=output_%j.txt
+#SBATCH --nodelist=g001
+#SBATCH --gres=gpu:1
+#SBATCH --time=04:00:00
+#SBATCH --mem=32G
 
-        node_type = "GPU" if script_type == "gpu" else "compute"
-        question = f"""I have this SLURM script that's hardcoded to run on node {node}, but that node might not be available. Can you suggest alternative {node_type} nodes?
+module load cuda/12.0
+python train.py"""
 
-{script_content}"""
+        question = f"""I have this SLURM script hardcoded to run on node {node}, but it's fully occupied right now. Can you check what other GPU nodes are available on the eX3 cluster and suggest an alternative script I can run?
+
+{script}"""
 
         data = asyncio.run(ask_assistant(async_client, question))
         content = data["response"].lower()

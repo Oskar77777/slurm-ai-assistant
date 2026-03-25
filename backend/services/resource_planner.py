@@ -65,6 +65,15 @@ def recommend_gpu_allocation(nodes_data: dict[str, Any], num_gpus: int) -> str:
             infeasible.append(entry)
 
     lines = [f"[RESOURCE RECOMMENDATION FOR {num_gpus} GPUs]"]
+    lines.append("GPU PARTITION SUMMARY:")
+    lines.append("  Format: partition | GPU model | GPUs/node | nodes (idle/total) | GPUs available/total")
+    for (partition, gpu_model, gpus_per_node), info in sorted(partition_map.items()):
+        lines.append(
+            f"  {partition}: {gpu_model}, {gpus_per_node} GPU/node, "
+            f"{info['idle_nodes']}/{info['total_nodes']} nodes idle, "
+            f"{info['available_gpus']} GPUs available"
+        )
+    lines.append("")
 
     if feasible:
         lines.append("FEASIBLE OPTIONS (use one of these for --partition and --nodes):")
@@ -87,6 +96,27 @@ def recommend_gpu_allocation(nodes_data: dict[str, Any], num_gpus: int) -> str:
             )
 
     return "\n".join(lines)
+
+
+def detect_node_query_intent(messages: list[dict]) -> str:
+    """
+    Detect whether the user is asking about GPU nodes, CPU nodes, or all nodes.
+    Returns "gpu", "cpu", or "all".
+    """
+    gpu_keywords = ["gpu", "graphics", "cuda", "a100", "v100", "h100", "h200", "a40",
+                    "mi210", "mi100", "mi50", "gh200", "accelerat"]
+    cpu_keywords = ["cpu", "cpu-only", "cpu only", "compute node", "no gpu", "without gpu"]
+
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "").lower()
+        if any(kw in content for kw in cpu_keywords):
+            return "cpu"
+        if any(kw in content for kw in gpu_keywords):
+            return "gpu"
+
+    return "all"
 
 
 def extract_gpu_count(messages: list[dict]) -> int | None:
