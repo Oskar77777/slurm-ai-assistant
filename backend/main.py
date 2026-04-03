@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import config
 from models import ChatRequest, ChatResponse
-from services.ollama_client import ollama_client
+from services.ollama_client import ollama_client, detect_prompt_intent, build_system_prompt
 from services.ex3_client import ex3_client
 from services.data_processor import summarize_nodes, summarize_gpu_nodes, summarize_cpu_nodes
 from services.slurm_validator import validate_script, format_errors_for_llm
@@ -135,6 +135,11 @@ async def chat(request: ChatRequest):
     user_script = extract_user_script(messages)
     original_directives = extract_sbatch_directives(user_script) if user_script else {}
 
+    # Build a focused system prompt based on what the user is asking
+    prompt_intent = detect_prompt_intent(messages)
+    system_prompt = build_system_prompt(prompt_intent)
+    logger.info(f"Prompt intent: {prompt_intent}")
+
     iterations = 0
 
     while iterations < config.MAX_FETCH_ITERATIONS:
@@ -142,7 +147,7 @@ async def chat(request: ChatRequest):
         logger.info(f"Iteration {iterations}")
 
         try:
-            response = await ollama_client.chat(messages)
+            response = await ollama_client.chat(messages, system_prompt=system_prompt)
             logger.info(f"LLM response: {response[:200]}...")
         except Exception as e:
             logger.error(f"LLM error: {str(e)}")
@@ -168,7 +173,7 @@ async def chat(request: ChatRequest):
                         data_str = summarize_nodes(cluster_data)
                     logger.info(f"Node query intent: {intent}")
 
-                    if intent in ("gpu", "all"):
+                    if intent == "gpu":
                         num_gpus = extract_gpu_count(messages) or 1
                         recommendation = recommend_gpu_allocation(cluster_data, num_gpus)
                         data_str = data_str + "\n\n" + recommendation
