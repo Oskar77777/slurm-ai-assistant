@@ -140,3 +140,53 @@ def summarize_gpu_nodes(nodes_data: dict[str, Any]) -> str:
 def summarize_cpu_nodes(nodes_data: dict[str, Any]) -> str:
     """Summarize CPU-only nodes."""
     return _format_output(_build_nodes_by_status(nodes_data), node_filter="cpu")
+
+
+def format_single_node(node_data: dict[str, Any]) -> str:
+    """Format detailed info for a single node into human-readable text."""
+    if not node_data:
+        return "No data returned for this node."
+
+    name = list(node_data.keys())[0]
+    node = node_data[name]
+
+    sockets = node.get("sockets", 1)
+    cores_per_socket = node.get("cores_per_socket", 1)
+    threads_per_core = node.get("threads_per_core", 1)
+    total_cpus = sockets * cores_per_socket * threads_per_core
+
+    alloc = node.get("alloc_tres", {})
+    allocated_cpus = alloc.get("cpu", 0)
+    available_cpus = total_cpus - allocated_cpus
+
+    memory_gb = int(round(node.get("memory", 0) / 1024 / 1024, 0))
+    allocated_mem_gb = int(round(alloc.get("memory", 0) / 1024 / 1024, 0))
+    available_mem_gb = memory_gb - allocated_mem_gb
+
+    cards = node.get("cards", [])
+    total_gpus = len(cards)
+    allocated_gpus = alloc.get("gpu", 0)
+    available_gpus = total_gpus - allocated_gpus
+
+    if alloc.get("node", 0) == 0:
+        status = "IDLE"
+    elif available_cpus == 0 and (total_gpus == 0 or available_gpus == 0):
+        status = "FULLY OCCUPIED"
+    else:
+        status = "PARTIAL"
+
+    lines = [f"NODE: {name} [{status}]"]
+    lines.append(f"  CPUs:         {available_cpus}/{total_cpus} available")
+    lines.append(f"  CPU model:    {node.get('cpu_model', 'Unknown')}")
+    lines.append(f"  Architecture: {node.get('architecture', 'Unknown')}")
+    lines.append(f"  Memory:       {available_mem_gb}/{memory_gb} GB available")
+    lines.append(f"  Topology:     {sockets} socket(s) × {cores_per_socket} cores × {threads_per_core} threads")
+
+    if cards:
+        gpu_model = cards[0].get("model", "Unknown")
+        lines.append(f"  GPUs:         {available_gpus}/{total_gpus} available ({gpu_model})")
+
+    lines.append(f"  Partitions:   [{', '.join(node.get('partitions', []))}]")
+    lines.append(f"  OS:           {node.get('os_name', '')} {node.get('os_release', '')}")
+
+    return "\n".join(lines)

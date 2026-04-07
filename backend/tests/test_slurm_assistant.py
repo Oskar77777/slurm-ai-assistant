@@ -124,6 +124,48 @@ class TestScriptGeneration:
         assert any(p in content for p in self.EX3_GPU_PARTITIONS), \
             f"Expected script to reference a real eX3 GPU partition. Known GPU partitions: {self.EX3_GPU_PARTITIONS}"
 
+    def test_specific_node_script(self, async_client, services_available):
+        """Generate a script for a specific node (n005), verifying real node data is fetched.
+        n005 exists in both mock and live data with partitions: aarchq, armq (CPU-only)."""
+        question = (
+            "Can you make a SLURM script using node n005 in the eX3 cluster? "
+            "The script is for a simple PyTorch script only requiring cpu."
+        )
+
+        data = asyncio.run(ask_assistant(async_client, question))
+        content = data["response"].lower()
+
+        # Should contain SLURM directives
+        assert "#sbatch" in content, "Expected SLURM directives"
+
+        # Extract the bash script block
+        script_match = re.search(r"```bash\n(.*?)```", data["response"], re.DOTALL)
+        assert script_match is not None, "Expected a bash code block in the response"
+        script_block = script_match.group(1).lower()
+
+        # --partition must be one of n005's real partitions (proves node data was fetched)
+        n005_partitions = ["aarchq", "armq"]
+        assert any(f"partition={p}" in script_block or f"partition {p}" in script_block
+                   for p in n005_partitions), \
+            f"Expected --partition to be one of n005's real partitions {n005_partitions}, not a made-up one"
+
+        # Should reference n005 by name somewhere in the response
+        assert "n005" in content, "Expected n005 to be mentioned in the response"
+
+    def test_unavailable_node(self, async_client, services_available):
+        """When the user asks about a node that doesn't exist, the assistant should say so."""
+        question = "Can you make a SLURM script using node n999 in the eX3 cluster?"
+
+        data = asyncio.run(ask_assistant(async_client, question))
+        content = data["response"].lower()
+
+        not_available_indicators = [
+            "not found", "not available", "does not exist", "couldn't find",
+            "unable to find", "no information", "different node"
+        ]
+        assert any(ind in content for ind in not_available_indicators), \
+            "Expected the assistant to inform the user that n999 is not available"
+
     def test_cpu_script(self, async_client, services_available):
         """Generate a CPU script based on currently available eX3 nodes."""
         question = (

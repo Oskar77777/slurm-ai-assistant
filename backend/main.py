@@ -8,7 +8,7 @@ import config
 from models import ChatRequest, ChatResponse
 from services.ollama_client import ollama_client, detect_prompt_intent, build_system_prompt
 from services.ex3_client import ex3_client
-from services.data_processor import summarize_nodes, summarize_gpu_nodes, summarize_cpu_nodes
+from services.data_processor import summarize_nodes, summarize_gpu_nodes, summarize_cpu_nodes, format_single_node
 from services.slurm_validator import validate_script, format_errors_for_llm
 from services.resource_planner import recommend_gpu_allocation, extract_gpu_count, detect_node_query_intent
 
@@ -33,6 +33,21 @@ def parse_fetch_marker(response: str) -> str | None:
     match = re.search(r"\[FETCH:\s*([^\]]+)\]", response)
     if match:
         return match.group(1).strip()
+    return None
+
+
+def extract_node_name(messages: list[dict]) -> str | None:
+    """Extract a specific node name from the latest user message only."""
+    pattern = re.compile(r"\b((?:gh|g|n|v)\d{3,4})\b", re.IGNORECASE)
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        if content.startswith("[SYSTEM DATA"):
+            continue
+        # Only check the single most recent real user message
+        match = pattern.search(content)
+        return match.group(1).lower() if match else None
     return None
 
 
@@ -140,6 +155,41 @@ async def chat(request: ChatRequest):
     system_prompt = build_system_prompt(prompt_intent)
     logger.info(f"Prompt intent: {prompt_intent}")
 
+    # If the user mentioned a specific node, pre-fetch its data deterministically
+    specific_node = extract_node_name(messages)
+    if specific_node:
+        try:
+            logger.info(f"Pre-fetching node info for: {specific_node}")
+            node_data = await ex3_client.get_node_info(specific_node)
+            if not node_data:
+                # Node not found in the cluster — tell the LLM so it can inform the user
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"[SYSTEM DATA] Node '{specific_node}' was not found in the eX3 cluster. "
+                        f"Tell the user that this node is currently not available or does not exist, "
+                        f"and ask if they would like to use a different node."
+                    )
+                })
+                logger.warning(f"Node {specific_node} returned empty response from API")
+            else:
+                node_str = format_single_node(node_data)
+                messages.append({
+                    "role": "assistant",
+                    "content": f"I've fetched the details for node {specific_node}."
+                })
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"[SYSTEM DATA - Real-time info for node {specific_node}]\n\n{node_str}\n\n"
+                        f"Use ONLY the partitions listed above for this node. "
+                        f"Set --mem to a reasonable amount for the job (e.g. 32G), not the full node memory."
+                    )
+                })
+                logger.info(f"Injected node data for {specific_node}")
+        except Exception as e:
+            logger.warning(f"Could not pre-fetch node {specific_node}: {e}")
+
     iterations = 0
 
     while iterations < config.MAX_FETCH_ITERATIONS:
@@ -179,6 +229,8 @@ async def chat(request: ChatRequest):
                         data_str = data_str + "\n\n" + recommendation
                         logger.info(f"Injected resource recommendation for {num_gpus} GPUs")
                     logger.info(f"Summarized node data ({len(data_str)} chars)")
+                elif tool_name.startswith("node_info:"):
+                    data_str = format_single_node(cluster_data)
                 else:
                     data_str = json.dumps(cluster_data, indent=2)
                 logger.info(f"Got cluster data ({len(data_str)} chars): {data_str[:200]}...")

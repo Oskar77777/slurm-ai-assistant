@@ -28,7 +28,9 @@ Available fetch commands:
 RULES:
 1. To fetch data, respond with ONLY the fetch command (nothing else)
 2. When you see "[SYSTEM DATA" in a user message, that contains REAL cluster data - use it!
-3. After receiving data, provide a complete helpful response analyzing that data"""
+3. After receiving data, provide a complete helpful response analyzing that data
+4. When the user mentions a specific node by name (e.g. n012, g001), ALWAYS fetch that node's info first with [FETCH: node_info:NODENAME] before writing any script. Never guess partition names or resources.
+5. Do not reuse node data from a previous fetch when the user is now asking about a different node."""
 
 
 PROMPT_NODES = """NODE DATA FORMAT:
@@ -42,8 +44,8 @@ Each node line shows: name, available/total CPUs, GPUs (if applicable), RAM, and
 The values in square brackets at the end of each node line are the partition names — use one of these directly as the --partition value in any SLURM script you write.
 
 NODE NAMING:
-4. Nodes starting with 'n' are CPU compute nodes, 'g' are GPU nodes, 'gh' are high-memory GPU nodes
-5. Recommend idle nodes first, then partial nodes
+6. Nodes starting with 'n' are CPU compute nodes, 'g' are GPU nodes, 'gh' are high-memory GPU nodes
+7. Recommend idle nodes first, then partial nodes
 
 HOW TO PRESENT NODE DATA:
 CRITICAL: List EVERY node with its FULL details (CPUs, GPUs, RAM, partitions).
@@ -70,9 +72,9 @@ Every SLURM script MUST include ALL of these directives:
 For GPU jobs, you MUST add --gpus-per-node=N using the value from the FEASIBLE OPTIONS block.
 Set --mem to a reasonable estimate for the job (e.g. 32G–128G), never to the full node memory.
 
-6. NEVER use placeholder values like `<gpu_partition>` or `<partition>` in scripts. Always substitute a real partition name from the cluster data you received.
-7. When the cluster data contains a [RESOURCE RECOMMENDATION FOR N GPUs] block, use ONLY the values listed under FEASIBLE OPTIONS for --partition, --nodes, and --gpus-per-node. Do not recalculate these yourself.
-8. Every SLURM script MUST include ALL of these directives: --job-name, --output, --error, --time, --partition, --nodes, --ntasks, --cpus-per-task, --mem. Never omit any of these.
+8. NEVER use placeholder values like `<gpu_partition>` or `<partition>` in scripts. Always substitute a real partition name from the cluster data you received.
+9. When the cluster data contains a [RESOURCE RECOMMENDATION FOR N GPUs] block, use ONLY the values listed under FEASIBLE OPTIONS for --partition, --nodes, and --gpus-per-node. Do not recalculate these yourself.
+10. Every SLURM script MUST include ALL of these directives: --job-name, --output, --error, --time, --partition, --nodes, --ntasks, --cpus-per-task, --mem. Never omit any of these.
 
 Multi-node distributed training:
 - Use --nodes=N where N is the number of nodes needed
@@ -195,7 +197,7 @@ def build_system_prompt(intent: str) -> str:
         "script_review": [PROMPT_BASE, PROMPT_SCRIPT_REVIEW],
         "script_adapt":  [PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES, PROMPT_SCRIPT_WRITE],
         "job_query":     [PROMPT_BASE, PROMPT_FETCH],
-        "general":       [PROMPT_BASE, PROMPT_FETCH],
+        "general":       [PROMPT_BASE],
     }
     sections = sections_map.get(intent, [PROMPT_BASE, PROMPT_FETCH])
     return "\n\n".join(sections)
