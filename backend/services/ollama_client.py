@@ -65,9 +65,10 @@ Every SLURM script MUST include ALL of these directives:
 #SBATCH --nodes=<N>                # Number of nodes
 #SBATCH --ntasks=<N>               # Number of tasks
 #SBATCH --cpus-per-task=<N>        # CPUs per task
-#SBATCH --mem=<N>G                 # Memory per node
+#SBATCH --mem=<N>GB                 # Memory per node
 ```
-Add GPU directives (--gpus-per-node or --gres=gpu) only when the job requires GPUs.
+For GPU jobs, you MUST add --gpus-per-node=N using the value from the FEASIBLE OPTIONS block.
+Set --mem to a reasonable estimate for the job (e.g. 32G–128G), never to the full node memory.
 
 6. NEVER use placeholder values like `<gpu_partition>` or `<partition>` in scripts. Always substitute a real partition name from the cluster data you received.
 7. When the cluster data contains a [RESOURCE RECOMMENDATION FOR N GPUs] block, use ONLY the values listed under FEASIBLE OPTIONS for --partition, --nodes, and --gpus-per-node. Do not recalculate these yourself.

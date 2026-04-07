@@ -50,10 +50,13 @@ def recommend_gpu_allocation(nodes_data: dict[str, Any], num_gpus: int) -> str:
 
     for (partition, gpu_model, gpus_per_node), info in sorted(partition_map.items()):
         nodes_needed = math.ceil(num_gpus / gpus_per_node)
+        # Request only the GPUs actually needed per node, not the full node allocation
+        gpus_per_node_requested = math.ceil(num_gpus / nodes_needed)
         entry = {
             "partition": partition,
             "gpu_model": gpu_model,
             "gpus_per_node": gpus_per_node,
+            "gpus_per_node_requested": gpus_per_node_requested,
             "nodes_needed": nodes_needed,
             "idle_nodes": info["idle_nodes"],
             "total_nodes": info["total_nodes"],
@@ -80,7 +83,7 @@ def recommend_gpu_allocation(nodes_data: dict[str, Any], num_gpus: int) -> str:
         for e in feasible:
             lines.append(
                 f"  {e['partition']}: {e['gpu_model']}, "
-                f"--nodes={e['nodes_needed']} --gpus-per-node={e['gpus_per_node']} "
+                f"--nodes={e['nodes_needed']} --gpus-per-node={e['gpus_per_node_requested']} "
                 f"({e['idle_nodes']}/{e['total_nodes']} nodes currently idle)"
             )
     else:
