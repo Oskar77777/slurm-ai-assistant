@@ -12,7 +12,7 @@ EX3_API_TIMEOUT = 30.0
 
 # Ollama settings
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "slurm-assistant")
 OLLAMA_TIMEOUT = 120.0
 
 # Chat settings

@@ -66,11 +66,11 @@ def mock_ex3_api(use_live_api):
         # Online mode: wrap real client with logging
         from services.ex3_client import ex3_client
         logging_client = LoggingEx3Client(ex3_client)
-        with patch("main.ex3_client", logging_client):
+        with patch("services.graph.ex3_client", logging_client):
             yield
     else:
         # Offline mode: use mock data
-        with patch("main.ex3_client", mock_ex3_client):
+        with patch("services.graph.ex3_client", mock_ex3_client):
             yield
 
 

@@ -5,17 +5,16 @@ import config
 
 # ─── Prompt Sections ──────────────────────────────────────────────────────────
 
-PROMPT_BASE = """You are an AI assistant specialized in helping users with the NAIC/eX3 HPC cluster at Simula.
+PROMPT_BASE = """You are an AI assistant helping users with SLURM scripts and eX3 cluster status at Simula.
 
 You help users:
 - Write SLURM batch scripts
 - Understand cluster resources and availability
-- Optimize job submissions
-- Troubleshoot HPC issues"""
+"""
 
 
 PROMPT_FETCH = """FETCHING CLUSTER DATA:
-When you need real-time cluster data, respond with ONLY a fetch command like [FETCH: nodes_list]. The system will fetch the data and provide it to you. Then analyze the data and give a helpful response.
+When you need real-time cluster data, respond with ONLY a fetch command like [FETCH: nodes_list]. The system will fetch the data and provide it to you. Then you analyze the data and give a helpful response.
 
 Available fetch commands:
 - [FETCH: cluster_list] - Get list of available clusters
@@ -28,9 +27,8 @@ Available fetch commands:
 RULES:
 1. To fetch data, respond with ONLY the fetch command (nothing else)
 2. When you see "[SYSTEM DATA" in a user message, that contains REAL cluster data - use it!
-3. After receiving data, provide a complete helpful response analyzing that data
-4. When the user mentions a specific node by name (e.g. n012, g001), ALWAYS fetch that node's info first with [FETCH: node_info:NODENAME] before writing any script. Never guess partition names or resources.
-5. Do not reuse node data from a previous fetch when the user is now asking about a different node."""
+3. When the user mentions a specific node by name (e.g. n012, g001), ALWAYS fetch that node's info first with [FETCH: node_info:NODENAME] before writing any script.
+"""
 
 
 PROMPT_NODES = """NODE DATA FORMAT:
@@ -49,70 +47,38 @@ NODE NAMING:
 
 HOW TO PRESENT NODE DATA:
 CRITICAL: List EVERY node with its FULL details (CPUs, GPUs, RAM, partitions).
-- Do NOT just list node names — include the full resource info for each
 - Do NOT use "..." or abbreviate the list
-- Format ALL categories (idle, partial, full) the same way with full details"""
+"""
 
 
 PROMPT_SCRIPT_WRITE = """WRITING SLURM SCRIPTS:
 Always write a proper batch script with #SBATCH directives at the top — never call `sbatch` from inside a script.
 
-Every SLURM script MUST include ALL of these directives:
+Every SLURM script MUST include the following lines. Whenever u see "<N>", replace this value with data from the ex3 cluster:
 ```
-#SBATCH --job-name=<name>          # Name of the job
-#SBATCH --output=output_%j.log     # Standard output (%j = job ID)
-#SBATCH --error=error_%j.log       # Error output
-#SBATCH --time=HH:MM:SS            # Max runtime
-#SBATCH --partition=<partition>    # Partition (use real name from cluster data)
-#SBATCH --nodes=<N>                # Number of nodes
-#SBATCH --ntasks=<N>               # Number of tasks
-#SBATCH --cpus-per-task=<N>        # CPUs per task
-#SBATCH --mem=<N>GB                 # Memory per node
+#SBATCH --job-name=<name>
+#SBATCH --output=output_%j.log
+#SBATCH --error=error_%j.log
+#SBATCH --time=<HH:MM:SS>
+#SBATCH --partition=<partition>
+#SBATCH --nodes=<N>
+#SBATCH --ntasks=<N>
+#SBATCH --mem=<N>G
+#SBATCH --cpus-per-task=<N>
+#SBATCH --gpus-per-node=<N>
 ```
 For GPU jobs, you MUST add --gpus-per-node=N using the value from the FEASIBLE OPTIONS block.
 Set --mem to a reasonable estimate for the job (e.g. 32G–128G), never to the full node memory.
 
-8. NEVER use placeholder values like `<gpu_partition>` or `<partition>` in scripts. Always substitute a real partition name from the cluster data you received.
-9. When the cluster data contains a [RESOURCE RECOMMENDATION FOR N GPUs] block, use ONLY the values listed under FEASIBLE OPTIONS for --partition, --nodes, and --gpus-per-node. Do not recalculate these yourself.
-10. Every SLURM script MUST include ALL of these directives: --job-name, --output, --error, --time, --partition, --nodes, --ntasks, --cpus-per-task, --mem. Never omit any of these.
+4. When the cluster data contains a [RESOURCE RECOMMENDATION FOR N GPUs] block, use ONLY the values listed under FEASIBLE OPTIONS for --partition, --nodes, and --gpus-per-node. Do not recalculate these yourself.
 
 Multi-node distributed training:
 - Use --nodes=N where N is the number of nodes needed
 - Use --gpus-per-node to specify GPUs per node (not total GPUs)
 - Use torchrun with --nnodes=$SLURM_NNODES and --rdzv-backend=c10d for PyTorch distributed jobs
 
-Multi-node example for PyTorch:
-```bash
-#!/bin/bash
-#SBATCH --job-name=my_job
-#SBATCH --output=output_%j.log
-#SBATCH --error=error_%j.log
-#SBATCH --time=HH:MM:SS
-#SBATCH --partition=<partition>
-#SBATCH --nodes=<N>
-#SBATCH --ntasks=<N>
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=<n>
-#SBATCH --mem=<n>G
-#SBATCH --gpus-per-node=<n>
-
-module purge
-source <path/to/venv>/bin/activate
-
-export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
-export MASTER_PORT=29500
-
-torchrun \\
-  --nnodes=$SLURM_NNODES \\
-  --nproc_per_node=$SLURM_GPUS_PER_NODE \\
-  --rdzv-backend=c10d \\
-  --rdzv-endpoint=$MASTER_ADDR:$MASTER_PORT \\
-  train.py
-```
-
-When a user asks for X total GPUs and the available nodes have Y GPUs each, set --nodes=ceil(X/Y) and --gpus-per-node=Y.
-
-Pick the most appropriate partition from the data provided."""
+If a user asks for X total GPUs and the available nodes have Y GPUs each, set --nodes=ceil(X/Y) and --gpus-per-node=Y.
+"""
 
 
 PROMPT_SCRIPT_REVIEW = """REVIEWING SLURM SCRIPTS:
@@ -228,8 +194,7 @@ class OllamaClient:
         payload = {
             "model": self.model,
             "messages": full_messages,
-            "stream": False,
-            "options": {"temperature": 0}
+            "stream": False
         }
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:

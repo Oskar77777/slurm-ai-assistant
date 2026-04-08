@@ -1,0 +1,11 @@
+FROM llama3.2:latest
+
+# Increased context window: default is 4096 which can overflow when
+# the system prompt + cluster node data + conversation history is combined.
+PARAMETER num_ctx 16384
+
+# Deterministic output — no creative variation in SLURM scripts or node listings.
+PARAMETER temperature 0
+
+# Allow long responses for verbose SLURM scripts and full node listings.
+PARAMETER num_predict 2048
