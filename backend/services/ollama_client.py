@@ -14,20 +14,22 @@ You help users:
 
 
 PROMPT_FETCH = """FETCHING CLUSTER DATA:
-When you need real-time cluster data, respond with ONLY a fetch command like [FETCH: nodes_list]. The system will fetch the data and provide it to you. Then you analyze the data and give a helpful response.
+In most cases cluster data is already provided in the conversation as [SYSTEM DATA]. Use it directly.
+If you need data that is NOT already in the conversation, respond with ONLY a fetch command:
 
 Available fetch commands:
 - [FETCH: cluster_list] - Get list of available clusters
 - [FETCH: nodes_list] - Get all nodes in eX3 cluster (summarized with availability)
-- [FETCH: nodes_info] - Get detailed system info for all nodes (summarized with availability)
 - [FETCH: node_info:NODENAME] - Get specific node details (replace NODENAME with actual node name)
 - [FETCH: jobs_list] - Get all jobs in the cluster (running, pending, completed)
 - [FETCH: job_info:JOBID] - Get specific job details (replace JOBID with actual job ID)
+- [FETCH: partitions_list] - Get all partitions with node membership, CPU/GPU counts, and job queue sizes
 
 RULES:
 1. To fetch data, respond with ONLY the fetch command (nothing else)
 2. When you see "[SYSTEM DATA" in a user message, that contains REAL cluster data - use it!
-3. When the user mentions a specific node by name (e.g. n012, g001), ALWAYS fetch that node's info first with [FETCH: node_info:NODENAME] before writing any script.
+3. NEVER generate or fabricate [SYSTEM DATA] blocks yourself. You cannot know real cluster state.
+4. NEVER invent node names, partition names, GPU counts, or availability.
 """
 
 
@@ -42,19 +44,55 @@ Each node line shows: name, available/total CPUs, GPUs (if applicable), RAM, and
 The values in square brackets at the end of each node line are the partition names — use one of these directly as the --partition value in any SLURM script you write.
 
 NODE NAMING:
-6. Nodes starting with 'n' are CPU compute nodes, 'g' are GPU nodes, 'gh' are high-memory GPU nodes
-7. Recommend idle nodes first, then partial nodes
+- Nodes starting with 'n' are CPU compute nodes, 'g' are GPU nodes, 'gh' are high-memory GPU nodes
 
-HOW TO PRESENT NODE DATA:
-CRITICAL: List EVERY node with its FULL details (CPUs, GPUs, RAM, partitions).
-- Do NOT use "..." or abbreviate the list
+REQUIRED OUTPUT FORMAT FOR NODE LISTINGS:
+Use this table format ONLY when listing multiple nodes. For a single node detail request, present the information as a plain readable summary instead.
+
+When listing multiple nodes, you MUST use exactly this structure:
+
+### 🟢 Idle (N nodes)
+| Node | CPUs | GPUs | RAM | Partitions |
+|------|------|------|-----|------------|
+| name | avail/total | N x GPU_MODEL | X GB | partition1, partition2 |
+
+### 🟡 Partially Occupied (N nodes)
+| Node | CPUs | GPUs | RAM | Partitions |
+|------|------|------|-----|------------|
+| name | avail/total | N x GPU_MODEL | X GB | partition1 |
+
+### 🔴 Fully Occupied (N nodes)
+| Node | Partitions |
+|------|------------|
+| name | partition1 |
+
+Rules:
+- ALWAYS include all three sections, even if a section has 0 nodes (write "none" as the only row)
+- For CPU-only nodes (no GPU in the data), write — in the GPU column. NEVER put the RAM value there.
+- Every row MUST have exactly 5 cells: Node | CPUs | GPUs | RAM | Partitions
+- List every node — never abbreviate with "..." or skip entries
+"""
+
+
+PROMPT_PARTITIONS = """PARTITION DATA FORMAT:
+When listing partitions, you MUST present them as a markdown table using exactly this format:
+
+| Partition | Nodes | CPUs | GPUs | Jobs Running | Jobs Pending |
+|-----------|-------|------|------|--------------|--------------|
+| name | N [compact-range] | N | N (X reserved, Y in use) | N | N |
+
+Rules:
+- For partitions with no GPUs, write — in the GPUs column
+- List every partition — never skip or abbreviate
+- Use the compact node range (e.g. n[001-004]) in the Nodes column
+- Do not add any extra text between partition rows
 """
 
 
 PROMPT_SCRIPT_WRITE = """WRITING SLURM SCRIPTS:
 Always write a proper batch script with #SBATCH directives at the top — never call `sbatch` from inside a script.
 
-Every SLURM script MUST include the following lines. Whenever u see "<N>", replace this value with data from the ex3 cluster:
+Every SLURM script MUST include the following directives:
 ```
 #SBATCH --job-name=<name>
 #SBATCH --output=output_%j.log
@@ -70,7 +108,8 @@ Every SLURM script MUST include the following lines. Whenever u see "<N>", repla
 For GPU jobs, you MUST add --gpus-per-node=N using the value from the FEASIBLE OPTIONS block.
 Set --mem to a reasonable estimate for the job (e.g. 32G–128G), never to the full node memory.
 
-4. When the cluster data contains a [RESOURCE RECOMMENDATION FOR N GPUs] block, use ONLY the values listed under FEASIBLE OPTIONS for --partition, --nodes, and --gpus-per-node. Do not recalculate these yourself.
+When the cluster data contains a [RESOURCE RECOMMENDATION FOR N GPUs] block, use ONLY the values
+listed under FEASIBLE OPTIONS for --partition, --nodes, and --gpus-per-node. Do not recalculate these yourself.
 
 Multi-node distributed training:
 - Use --nodes=N where N is the number of nodes needed
@@ -103,75 +142,128 @@ If you find NO validation errors and no higher-level issues, respond:
 Only mention actual typos or invalid syntax. Do not suggest removing valid directives."""
 
 
+PROMPT_REMINDER = """You are an AI assistant for the eX3 HPC cluster at Simula. Continue the conversation.
+- Cluster data has already been provided earlier in this conversation — use it.
+- NEVER fabricate node names, partition names, GPU counts, or [SYSTEM DATA] blocks.
+- If you genuinely need fresh data not already in context, use [FETCH: nodes_list] or similar."""
+
+
 # ─── Intent Detection & Prompt Building ───────────────────────────────────────
+
+_ADAPT_KEYWORDS = [
+    "adapt", "convert", "change", "different node", "alternative",
+    "instead", "modify", "adjust", "migrate", "other node", "suggest",
+    "replace", "available",
+]
+_WRITE_KEYWORDS = [
+    "write", "generate", "create", "make", "give me a script",
+    "slurm script", "batch script", "sbatch script", "need a script",
+    "new script",
+]
+_NODE_KEYWORDS = [
+    "what nodes", "available nodes", "node status", "which nodes",
+    "list nodes", "show nodes", "check nodes", "cluster nodes",
+    "what resources", "available resources", "what gpu", "what cpu",
+    "gpu nodes", "cpu nodes", "nodes are", "nodes available",
+    "list all nodes", "show all nodes", "all nodes", "current nodes",
+    "nodes right now", "nodes currently", "cluster status", "cluster resources",
+    "free nodes", "idle nodes", "show cluster", "what is available",
+    "what's available", "what are the nodes", "show me nodes",
+]
+_JOB_KEYWORDS = [
+    "job status", "my jobs", "job queue", "running jobs",
+    "pending jobs", "submitted job", "jobs_list", "job_info",
+    "list jobs", "show jobs", "check jobs", "what jobs",
+]
+_PARTITION_KEYWORDS = [
+    "partition", "partitions", "list partitions", "show partitions",
+    "available partitions", "what partitions", "which partitions",
+    "partition names", "partition list",
+]
+
+
+def _classify_message(content: str) -> str:
+    """Classify a single message string into an intent."""
+    c = content.lower()
+    has_script = "#sbatch" in c
+    if has_script and any(kw in c for kw in _ADAPT_KEYWORDS):
+        return "script_adapt"
+    if has_script:
+        return "script_review"
+    if any(kw in c for kw in _WRITE_KEYWORDS):
+        return "script_write"
+    if any(kw in c for kw in _NODE_KEYWORDS):
+        return "node_query"
+    if any(kw in c for kw in _JOB_KEYWORDS):
+        return "job_query"
+    if any(kw in c for kw in _PARTITION_KEYWORDS):
+        return "partition_query"
+    return "general"
+
+
+def detect_fetch_intent(messages: List[Dict[str, str]]) -> str:
+    """
+    Detect intent from the LATEST user message only.
+    Used to decide whether to pre-fetch cluster data — must not look back at
+    previous messages or a follow-up like 'nice, thank you!' would re-trigger a fetch.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        if content.startswith("[SYSTEM DATA"):
+            continue
+        return _classify_message(content)
+    return "general"
+
 
 def detect_prompt_intent(messages: List[Dict[str, str]]) -> str:
     """
-    Detect the high-level intent of the conversation to select prompt sections.
-    Returns one of: "node_query", "script_write", "script_review", "script_adapt",
-                    "job_query", "general"
+    Detect intent by scanning the last 3 user messages.
+    Used for system prompt selection — the lookback helps pick the right prompt
+    sections for follow-up messages that reference earlier context.
+    Do NOT use this for pre-fetch decisions (use detect_fetch_intent instead).
     """
-    adapt_keywords = [
-        "adapt", "convert", "change", "different node", "alternative",
-        "instead", "modify", "adjust", "migrate", "other node", "suggest",
-        "replace", "available",
-    ]
-    write_keywords = [
-        "write", "generate", "create", "make", "give me a script",
-        "slurm script", "batch script", "sbatch script", "need a script",
-        "new script",
-    ]
-    node_keywords = [
-        "what nodes", "available nodes", "node status", "which nodes",
-        "list nodes", "show nodes", "check nodes", "cluster nodes",
-        "what resources", "available resources", "what gpu", "what cpu",
-        "gpu nodes", "cpu nodes", "nodes are", "nodes available",
-    ]
-    job_keywords = [
-        "job status", "my jobs", "job queue", "running jobs",
-        "pending jobs", "submitted job", "jobs_list", "job_info",
-    ]
-
     user_messages = [m for m in reversed(messages) if m.get("role") == "user"]
-
     for msg in user_messages[:3]:
         content = msg.get("content", "")
         if content.startswith("[SYSTEM DATA"):
             continue
-        c = content.lower()
-        has_script = "#sbatch" in c
-
-        if has_script and any(kw in c for kw in adapt_keywords):
-            return "script_adapt"
-        if has_script:
-            return "script_review"
-        if any(kw in c for kw in write_keywords):
-            return "script_write"
-        if any(kw in c for kw in node_keywords):
-            return "node_query"
-        if any(kw in c for kw in job_keywords):
-            return "job_query"
-
+        intent = _classify_message(content)
+        if intent != "general":
+            return intent
     return "general"
 
 
-def build_system_prompt(intent: str) -> str:
-    """Assemble a focused system prompt from sections based on detected intent."""
+def build_system_prompt(intent: str, first_turn: bool = True) -> str:
+    """Assemble a system prompt based on intent and whether this is the first turn."""
+    if not first_turn:
+        # Subsequent turns: short reminder + only the action-relevant section
+        action_sections = {
+            "node_query":      [PROMPT_REMINDER, PROMPT_NODES],
+            "script_write":    [PROMPT_REMINDER, PROMPT_SCRIPT_WRITE],
+            "script_adapt":    [PROMPT_REMINDER, PROMPT_NODES, PROMPT_SCRIPT_WRITE],
+            "script_review":   [PROMPT_REMINDER, PROMPT_SCRIPT_REVIEW],
+            "partition_query": [PROMPT_REMINDER, PROMPT_PARTITIONS],
+        }
+        return "\n\n".join(action_sections.get(intent, [PROMPT_REMINDER]))
+
+    # First turn: full intent-specific prompt
     sections_map = {
-        "node_query":    [PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES],
-        "script_write":  [PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES, PROMPT_SCRIPT_WRITE],
-        "script_review": [PROMPT_BASE, PROMPT_SCRIPT_REVIEW],
-        "script_adapt":  [PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES, PROMPT_SCRIPT_WRITE],
-        "job_query":     [PROMPT_BASE, PROMPT_FETCH],
-        "general":       [PROMPT_BASE],
+        "node_query":      [PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES],
+        "script_write":    [PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES, PROMPT_SCRIPT_WRITE],
+        "script_review":   [PROMPT_BASE, PROMPT_SCRIPT_REVIEW],
+        "script_adapt":    [PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES, PROMPT_SCRIPT_WRITE],
+        "job_query":       [PROMPT_BASE, PROMPT_FETCH],
+        "partition_query": [PROMPT_BASE, PROMPT_FETCH, PROMPT_PARTITIONS],
+        "general":         [PROMPT_BASE, PROMPT_FETCH],
     }
-    sections = sections_map.get(intent, [PROMPT_BASE, PROMPT_FETCH])
-    return "\n\n".join(sections)
+    return "\n\n".join(sections_map.get(intent, [PROMPT_BASE, PROMPT_FETCH]))
 
 
 # Full prompt assembled from all sections (used as fallback)
 SYSTEM_PROMPT = "\n\n".join([
-    PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES, PROMPT_SCRIPT_WRITE, PROMPT_SCRIPT_REVIEW
+    PROMPT_BASE, PROMPT_FETCH, PROMPT_NODES, PROMPT_PARTITIONS, PROMPT_SCRIPT_WRITE, PROMPT_SCRIPT_REVIEW
 ])
 
 

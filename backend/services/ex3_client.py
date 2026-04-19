@@ -64,6 +64,11 @@ class Ex3Client:
         cluster = cluster or self.default_cluster
         return await self._request(f"cluster/{cluster}/jobs/{job_id}?epoch=0")
 
+    async def get_partitions(self, cluster: Optional[str] = None) -> list[Any]:
+        """Get all partitions in a cluster."""
+        cluster = cluster or self.default_cluster
+        return await self._request(f"cluster/{cluster}/partitions")
+
     async def call_by_tool_name(self, tool_name: str) -> dict[str, Any]:
         """Call an API endpoint based on the tool name from LLM."""
         if tool_name == "cluster_list":
@@ -80,6 +85,8 @@ class Ex3Client:
         elif tool_name.startswith("job_info:"):
             job_id = tool_name.split(":", 1)[1]
             return await self.get_job_info(job_id)
+        elif tool_name == "partitions_list":
+            return await self.get_partitions()
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 

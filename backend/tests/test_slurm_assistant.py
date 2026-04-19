@@ -275,7 +275,7 @@ class TestMultiNodeTraining:
     """Tests for generating multi-node distributed training SLURM scripts."""
 
     EX3_GPU_PARTITIONS = ["dgx2q", "hgx2q", "h200q", "gh200q", "a100q", "a40q",
-                          "mi210q", "mi100q", "mi50q", "xeonmaxq"]
+                          "mi210q", "mi100q", "mi50q", "xeonmaxq", "habanaq"]
 
     def test_multinode_gpu_script(self, async_client, services_available):
         """Generate a multi-node distributed training script for 12 GPUs."""

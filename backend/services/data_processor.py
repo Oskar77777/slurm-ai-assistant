@@ -65,7 +65,7 @@ def _build_nodes_by_status(nodes_data: dict[str, Any]) -> dict:
 def _format_node_line(n: dict) -> str:
     if n["type"] == "GPU":
         return f"  {n['name']}: {n['cpus']} CPUs, {n['gpus']} {n['gpu_model']} GPUs, {n['mem_gb']} GB RAM [{', '.join(n['partitions'])}]"
-    return f"  {n['name']}: {n['cpus']} CPUs, {n['mem_gb']} GB RAM [{', '.join(n['partitions'])}]"
+    return f"  {n['name']}: {n['cpus']} CPUs, no GPU, {n['mem_gb']} GB RAM [{', '.join(n['partitions'])}]"
 
 
 def _format_output(nodes_by_status: dict, node_filter: str = "all") -> str:
@@ -140,6 +140,34 @@ def summarize_gpu_nodes(nodes_data: dict[str, Any]) -> str:
 def summarize_cpu_nodes(nodes_data: dict[str, Any]) -> str:
     """Summarize CPU-only nodes."""
     return _format_output(_build_nodes_by_status(nodes_data), node_filter="cpu")
+
+
+def summarize_partitions(partitions_data: list[Any]) -> str:
+    """Summarize partition data into human-readable text."""
+    if not partitions_data:
+        return "No partition data available."
+
+    lines = [f"PARTITIONS: {len(partitions_data)} total", ""]
+    for p in sorted(partitions_data, key=lambda x: x.get("name", "")):
+        name = p.get("name", "unknown")
+        nodes_compact = p.get("nodes_compact") or p.get("nodes", [])
+        nodes_str = ", ".join(nodes_compact) if nodes_compact else "none"
+        node_count = len(p.get("nodes", []))
+        total_cpus = p.get("total_cpus", 0)
+        total_gpus = p.get("total_gpus", 0)
+        gpus_reserved = p.get("gpus_reserved", 0)
+        gpus_in_use = len(p.get("gpus_in_use", []))
+        running = len(p.get("jobs_running", []))
+        pending = len(p.get("jobs_pending", []))
+
+        gpu_str = f"  |  {total_gpus} GPUs ({gpus_reserved} reserved, {gpus_in_use} in use)" if total_gpus > 0 else ""
+        lines.append(
+            f"  {name}: {node_count} node(s) [{nodes_str}]"
+            f"  |  {total_cpus} CPUs{gpu_str}"
+            f"  |  {running} running, {pending} pending"
+        )
+
+    return "\n".join(lines)
 
 
 def format_single_node(node_data: dict[str, Any]) -> str:
