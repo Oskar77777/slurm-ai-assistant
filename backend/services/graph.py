@@ -38,6 +38,7 @@ class AssistantState(TypedDict):
     system_prompt: str
     original_directives: dict[str, str]
     fetch_count: int
+    prefetched_tool: str  # tool pre-fetched in preprocess, or "" if none
     llm_response: str
     response: str
 
@@ -235,11 +236,18 @@ async def preprocess_node(state: AssistantState) -> dict:
         except Exception as e:
             logger.warning(f"Deterministic pre-fetch failed for '{tool}': {e}")
 
+    prefetched_tool = ""
+    if specific_node:
+        prefetched_tool = f"node_info:{specific_node}"
+    elif fetch_intent in _INTENT_FETCH_MAP:
+        prefetched_tool = _INTENT_FETCH_MAP[fetch_intent]
+
     return {
         "messages": messages,
         "system_prompt": system_prompt,
         "original_directives": original_directives,
         "fetch_count": 0,
+        "prefetched_tool": prefetched_tool,
         "llm_response": "",
         "response": "",
     }
@@ -330,7 +338,11 @@ async def postprocess_node(state: AssistantState) -> dict:
 # ── Routing ───────────────────────────────────────────────────────────────────
 
 def route_after_llm(state: AssistantState) -> str:
-    if _parse_fetch_marker(state["llm_response"]) and state["fetch_count"] < config.MAX_FETCH_ITERATIONS:
+    fetch_tool = _parse_fetch_marker(state["llm_response"])
+    if fetch_tool and state["fetch_count"] < config.MAX_FETCH_ITERATIONS:
+        if fetch_tool == state.get("prefetched_tool", ""):
+            logger.info(f"Skipping duplicate fetch for already pre-fetched tool: {fetch_tool}")
+            return "postprocess"
         return "fetch_data"
     return "postprocess"
 

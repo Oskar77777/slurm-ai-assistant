@@ -7,5 +7,5 @@ PARAMETER num_ctx 16384
 # Deterministic output — no creative variation in SLURM scripts or node listings.
 PARAMETER temperature 0
 
-# Allow long responses for verbose SLURM scripts and full node listings.
-PARAMETER num_predict 2048
+# Allow long responses for verbose SLURM scripts and full node/partition listings.
+PARAMETER num_predict 4096

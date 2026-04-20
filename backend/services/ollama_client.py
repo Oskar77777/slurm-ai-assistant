@@ -75,17 +75,20 @@ Rules:
 
 
 PROMPT_PARTITIONS = """PARTITION DATA FORMAT:
-When listing partitions, you MUST present them as a markdown table using exactly this format:
+When listing partitions, output ONLY a single markdown table. No sections, no grouping, no headers like "Idle" or "Fully Occupied".
 
-| Partition | Nodes | CPUs | GPUs | Jobs Running | Jobs Pending |
-|-----------|-------|------|------|--------------|--------------|
-| name | N [compact-range] | N | N (X reserved, Y in use) | N | N |
+Use exactly this format:
+
+| Partition | Nodes | CPUs | GPUs | Running | Pending |
+|-----------|-------|------|------|---------|---------|
+| name | compact-range | N | N | N | N |
 
 Rules:
+- ONE table only — do not split into multiple tables or sections
 - For partitions with no GPUs, write — in the GPUs column
-- List every partition — never skip or abbreviate
-- Use the compact node range (e.g. n[001-004]) in the Nodes column
-- Do not add any extra text between partition rows
+- List every partition exactly once — never duplicate rows
+- Do NOT classify partitions as idle/partial/full — that applies to nodes, not partitions
+- Do NOT add emoji section headers (🟢 🟡 🔴) — those are for node listings only
 """
 
 
